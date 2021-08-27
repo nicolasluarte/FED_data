@@ -253,6 +253,28 @@ data %>%
 	theme_pubr()
 ggsave("ticks.png", width = 12)
 
+# daily intake data -----------------------------------------------------------
 
+daily <- read_csv("~/FED_data/data/all_daily.csv")
+daily %>%
+	mutate(date = lubridate::mdy(`MM:DD:YYYY hh:mm:ss`)) %>%
+	select(-`MM:DD:YYYY hh:mm:ss`) %>%
+	mutate(Mouse = as.factor(Mouse)) %>%
+	mutate(day = lubridate::day(date)) -> daily
+daily %>%
+	filter(day < 13) %>%
+	group_by(Mouse) %>%
+	mutate(mean_intake = mean(PelletCount)) -> daily_plot
 
-
+daily_plot %>%
+	ggplot(aes(date, PelletCount, color = as.factor(Issue), group = Mouse)) +
+	geom_point(size = 3) +
+	geom_line() +
+	geom_hline(aes(yintercept = mean_intake, linetype = "Mean intake"), color = "grey70", size = 3, alpha = 0.3) +
+	facet_grid(~Mouse) +
+	scale_color_manual(values=c("blue", "red")) +
+	labs(color = "FED Error", linetype = " ") +
+	ggtitle("Ingesta diaria del 2 de Agosto al 12 de agosto") +
+	scale_x_date(date_labels="%d",date_breaks  ="1 day") +
+	theme_pubr()
+ggsave("weekly_intake.png", width = 20)
