@@ -6,7 +6,8 @@ pacman::p_load(
 	       timetk,
 	       ggpubr,
 	       imputeTS,
-	       lubridate
+	       lubridate,
+	       ggforce
 	       )
 
 # load data -------------------------------------------------------------------
@@ -46,6 +47,46 @@ lights_labels <- function(light_init){
 data %>%
 	mutate(lights = add_lights(date, 12, 23)) -> data
 
+# delay histograms ------------------------------------------------------------
+
+data %>%
+	mutate(
+	       day = day(date)
+	       ) -> data
+
+data %>%
+	group_by(Mouse, day) %>%
+	mutate(
+	       IRI = diff(c(0, date))
+	       ) -> removal_times
+
+removal_times %>%
+	filter(IRI < 260, IRI > 0) %>%
+	ggplot(aes(IRI)) +
+	geom_histogram(aes()) +
+	scale_y_continuous() +
+	scale_x_discrete(limits = c(30, 60, 120, 240)) +
+	theme_pubr(base_size = 22) +
+	ylab("Percent") +
+	xlab("Removal times") +
+	theme(axis.text.x = element_text(color = "grey20", size = 20, angle = 0, hjust = .5, vjust = .5, face = "plain"),
+        axis.text.y = element_text(color = "grey20", size = 20, angle = 0, hjust = 1, vjust = 0, face = "plain"))
+ggsave("IRI.png")
+
+# per mice
+removal_times %>%
+	filter(IRI < 260, IRI > 0) %>%
+	ggplot(aes(IRI)) +
+	geom_histogram(aes()) +
+	scale_x_discrete(limits = c(30, 60, 120, 240)) +
+	theme_pubr(base_size = 22) +
+	facet_wrap(~Mouse, scales = "free") +
+	ylab("Percent") +
+	xlab("Removal times") +
+	theme(axis.text.x = element_text(color = "grey20", size = 20, angle = 0, hjust = .5, vjust = .5, face = "plain"),
+        axis.text.y = element_text(color = "grey20", size = 20, angle = 0, hjust = 1, vjust = 0, face = "plain"))
+ggsave("IRI_permice.png")
+
 # pellets per day -------------------------------------------------------------
 
 data %>%
@@ -56,6 +97,11 @@ data %>%
 		  pellets_per_day = n()
 		  ) %>%
 	ungroup() -> pellets_per_day
+
+data_extra <- read_csv("manual_intake.csv") %>%
+	mutate(Mouse = as.factor(Mouse))
+
+pellets_per_day <- bind_rows(pellets_per_day %>% filter(day != 30), data_extra)
 
 pellets_per_day %>%
 	filter(day != 30) %>%
@@ -100,7 +146,7 @@ pellets_baseline %>%
 	mutate(per_gr = ((pellets_per_day / mean_weight) / baseline) * 100 ) -> pellets_baseline
 
 pellets_baseline %>%
-	filter(day >= 23, day != 30) %>%
+	filter(day >= 23) %>%
 	ggplot(aes(day, per_gr)) +
 	geom_point() +
 	geom_line() +
@@ -108,6 +154,7 @@ pellets_baseline %>%
 	facet_grid(~Mouse) +
 	ylab("100% baseline intake") +
 	xlab("Days") +
+	scale_x_discrete(limits = c(24, 27, 30)) +
 	theme_pubr()
 ggsave("baseline_intake.png", width = 14)
 
@@ -120,12 +167,20 @@ left_join(weights, weights_all) %>%
 	mutate(delta_weight = abs(mean_weight - weight) / ((mean_weight + weight) / 2) * 100) -> weight_delta
 
 weight_delta %>%
-	filter(measurement %in% c(4, 5, 6)) %>%
+	group_by(measurement) %>%
+	mutate(global_mean = mean(delta_weight)) %>%
+	mutate(sem = sd(delta_weight) / sqrt(10)) %>%
+	ungroup() -> weight_delta 
+
+weight_delta %>%
+	filter(measurement %in% c(4, 5, 6, 7, 8)) %>%
 	ggplot(aes(measurement, delta_weight, color = Mouse)) +
 	geom_point() +
 	geom_line() +
+	geom_line(aes(measurement, global_mean), size = 2, color = "red") +
+	geom_errorbar(aes(ymin = global_mean - sem, ymax = global_mean + sem), color = "red", width = 0.3) +
 	ylim(c(-15, 15)) +
-	scale_x_discrete(limits = c(4, 5, 6)) +
+	scale_x_discrete(limits = c(4, 5, 6, 7, 8)) +
 	xlab("Days after baseline") +
 	ylab("Percent delta weight") +
 	theme_pubr()
@@ -144,21 +199,21 @@ data %>%
 tt %>%
 	filter(day >= 23, day != 30) %>%
 	ggplot(aes(hh, as.factor(intake))) +
-	geom_point(pch = "|") +
 	geom_rect(aes(xmin = hms("12:00:00"),
 		      xmax = hms("23:59:59"),
 		      ymin = -Inf,
 		      ymax = Inf
-		      ), alpha = 0.005, color = "grey20") +
+		      ), color = "grey20") +
+	geom_point(pch = "|") +
 	scale_x_time() +
 	theme_pubr() +
 	xlab("Hour") +
 	ylab("Pellet removal") +
 	theme(axis.text.y = element_blank(),
-	      axis.text.x = element_text(color = "grey20", size = 8, hjust = .5, vjust = .5, face = "plain"),
+	      axis.text.x = element_text(color = "grey20", size = 5, hjust = .5, vjust = .5, face = "plain"),
 	      strip.background = element_rect(fill = 'white'),
 	       strip.text.x = element_text(size = 12, color = "black", face = "bold")) +
-	facet_wrap(~Mouse, ncol = 2)
+	facet_grid(day ~ Mouse)
 ggsave("raster.png", width = 14, height = 5)
 
 # summarise data --------------------------------------------------------------
