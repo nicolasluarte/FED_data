@@ -98,6 +98,15 @@ data %>%
 		  ) %>%
 	ungroup() -> pellets_per_day
 
+# mean pellet per day, not corrected
+
+pellets_per_day %>%
+	group_by(Mouse) %>%
+	summarise(mean_intake = mean(pellets_per_day)) %>%
+	arrange(desc(mean_intake)) -> pellets_per_day
+group_a <- pellets_per_day %>% filter(Mouse %in% c(9, 8, 4, 7, 5))
+group_b <- pellets_per_day %>% filter(Mouse %in% c(0, 3, 2, 1, 6))
+
 data_extra <- read_csv("manual_intake.csv") %>%
 	mutate(Mouse = as.factor(Mouse))
 
@@ -173,14 +182,14 @@ weight_delta %>%
 	ungroup() -> weight_delta 
 
 weight_delta %>%
-	filter(measurement %in% c(4, 5, 6, 7, 8)) %>%
+	filter(measurement %in% c(4, 5, 6, 7, 8, 9)) %>%
 	ggplot(aes(measurement, delta_weight, color = Mouse)) +
 	geom_point() +
 	geom_line() +
 	geom_line(aes(measurement, global_mean), size = 2, color = "red") +
 	geom_errorbar(aes(ymin = global_mean - sem, ymax = global_mean + sem), color = "red", width = 0.3) +
 	ylim(c(-15, 15)) +
-	scale_x_discrete(limits = c(4, 5, 6, 7, 8)) +
+	scale_x_discrete(limits = c(4, 5, 6, 7, 8, 9)) +
 	xlab("Days after baseline") +
 	ylab("Percent delta weight") +
 	theme_pubr()
