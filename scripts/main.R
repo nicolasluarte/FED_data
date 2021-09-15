@@ -5,7 +5,6 @@ pacman::p_load(
 	       cowplot,
 	       timetk,
 	       ggpubr,
-	       imputeTS,
 	       lubridate,
 	       ggforce
 	       )
@@ -13,7 +12,7 @@ pacman::p_load(
 # load data -------------------------------------------------------------------
 
 list.files(path = "../data",
-	   pattern = "^[0-9]{3}_all.csv$",
+	   pattern = "^[0-9]{3}.csv$",
 	   full.names = TRUE,
 	   recursive = TRUE) %>%
 	map_dfr(~read_csv(.)) -> raw_data
@@ -46,6 +45,147 @@ lights_labels <- function(light_init){
 
 data %>%
 	mutate(lights = add_lights(date, 12, 23)) -> data
+
+# mice weights ----------------------------------------------------------------
+
+read_csv("../data/mice_weight.csv") %>%
+	mutate(
+	       date = dmy(date),
+	       mice = as.factor(mice)
+	       ) -> weights
+
+weights %>%
+	filter(
+	       date < "2021-09-06"
+	       ) %>%
+	group_by(mice) %>%
+	summarise(baseline = mean(weight)) %>%
+	ungroup() -> weight_baseline
+
+weights %>%
+	left_join(weight_baseline, by = "mice") %>%
+	filter(date >= "2021-09-06") %>%
+	mutate(delta_weight = ((weight - baseline) / ((weight + baseline) / 2)) * 100) -> delta_weight
+
+# add groups to delta weight
+
+delta_weight %>%
+	mutate(group = if_else(mice %in% c(234, 235, 236, 245, 265), "Uncertainty", "Certainty")) -> delta_weight
+
+delta_weight %>%
+	group_by(group, date) %>%
+	summarise(
+		  group_delta_weight = mean(delta_weight),
+		  sem = sd(delta_weight) / sqrt(n())
+		  ) %>%
+	ungroup() -> group_delta_weight
+
+delta_weight %>%
+	ggplot(aes(date, delta_weight, group = mice, color = mice)) +
+	geom_point() +
+	geom_line() +
+	geom_point(
+		   data = group_delta_weight,
+		   aes(date, group_delta_weight),
+		   inherit.aes = FALSE
+		   ) +
+	geom_line(
+		   data = group_delta_weight,
+		   aes(date, group_delta_weight),
+		   inherit.aes = FALSE,
+		   size = 1.5
+		   ) +
+	geom_errorbar(
+		   data = group_delta_weight,
+		   aes(
+		       date,
+		       ymin = group_delta_weight - sem,
+		       ymax = group_delta_weight + sem
+		       ),
+		      width = 0.3,
+		   inherit.aes = FALSE
+		   ) +
+	facet_wrap(~group) +
+	theme_pubr() +
+	ylab("% weight delta") +
+	xlab("Date")
+ggsave("weight.png", width = 14)
+
+# mice intake -----------------------------------------------------------------
+
+data %>%
+	mutate(group = if_else(Mouse %in% c(1, 2, 3, 6, 0), "Uncertainty", "Certainty")) %>%
+	mutate(day = as.Date(date)) %>%
+	filter(day != "2021-09-10") %>%
+	group_by(Mouse, day, group) %>%
+	summarise(pellets = n()) %>%
+	ungroup() -> intake
+
+intake %>%
+	filter(day >= "2021-08-30", day < "2021-09-06") %>%
+	group_by(Mouse, group) %>%
+	summarise(baseline_pellets = mean(pellets)) %>%
+	ungroup() -> baseline_intake
+
+intake %>%
+	filter(day >= "2021-09-06") %>%
+	left_join(baseline_intake %>% select(-group), by = "Mouse") %>%
+	mutate(delta_pellets = ((pellets - baseline_pellets) / (pellets + baseline_pellets / 2)) * 100) %>%
+	ungroup() -> delta_intake
+
+delta_intake %>%
+	group_by(day, group) %>%
+	summarise(
+		  mean_pellet = mean(delta_pellets),
+		  sem = sd(delta_pellets) / sqrt(n())
+		  ) -> group_delta_intake
+
+delta_intake %>%
+	mutate(
+	       Mouse = as.factor(recode(Mouse,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       ))
+	       ) %>%
+	ggplot(aes(day, delta_pellets, group = Mouse, color = Mouse)) +
+	geom_point() +
+	geom_line() +
+	geom_point(
+		   data = group_delta_intake,
+		   aes(day, mean_pellet),
+		   inherit.aes = FALSE
+		   ) +
+	geom_line(
+		   data = group_delta_intake,
+		   aes(day, mean_pellet),
+		   inherit.aes = FALSE,
+		   size = 1.5
+		   ) +
+	geom_errorbar(
+		   data = group_delta_intake,
+		   aes(day, ymin = mean_pellet - sem, ymax = mean_pellet + sem),
+		   inherit.aes = FALSE,
+		   width = 0.3
+		   ) +
+	facet_wrap(~group) +
+	theme_pubr() +
+	xlab("Date") +
+	ylab("Percent delta pellet intake")
+ggsave("intake.png", width = 14)
+ 
+
+
+
+
+
 
 # delay histograms ------------------------------------------------------------
 
