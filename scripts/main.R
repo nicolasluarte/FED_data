@@ -6,7 +6,8 @@ pacman::p_load(
 	       timetk,
 	       ggpubr,
 	       lubridate,
-	       ggforce
+	       ggforce,
+	       hms
 	       )
 
 # load data -------------------------------------------------------------------
@@ -25,6 +26,8 @@ raw_data %>%
 	       Mouse = as.factor(Mouse)
 	       ) %>%
 	select(-`MM:DD:YYYY hh:mm:ss`) -> data
+data %>%
+	drop_na(data) -> data
 
 # add lights off period -------------------------------------------------------
 
@@ -134,13 +137,23 @@ intake %>%
 	ungroup() -> delta_intake
 
 delta_intake %>%
+	filter(day < "2021-09-23", delta_pellets > -50) %>%
 	group_by(day, group) %>%
 	summarise(
 		  mean_pellet = mean(delta_pellets),
 		  sem = sd(delta_pellets) / sqrt(n())
 		  ) -> group_delta_intake
 
+delta_weight %>%
+	filter(date >= "2021-09-13") %>%
+	group_by(mice) %>%
+	summarise(weight = mean(weight)) %>%
+	mutate(Mouse = mice) -> mice_w
+
+write_csv(delta_intake, "delta_intake.csv")
+
 delta_intake %>%
+	filter(day != "2021-09-23", delta_pellets > -50) %>%
 	mutate(
 	       Mouse = as.factor(recode(Mouse,
 		`0` = 265,
@@ -180,6 +193,103 @@ delta_intake %>%
 	xlab("Date") +
 	ylab("Percent delta pellet intake")
 ggsave("intake.png", width = 14)
+
+# time between intakes --------------------------------------------------------
+
+# clean data
+data %>%
+	filter(MotorTurns < 10) %>%
+	mutate(
+	       hh = as_hms(date),
+	       day = day(date)
+	       ) -> data_hms
+
+data_hms %>%
+	group_by(Mouse, day) %>%
+	mutate(IRI = c(0, diff(hh))) -> IRI
+
+IRI %>% 
+	mutate(IRI_corr = IRI - Delay) %>%
+	filter(IRI_corr > 0) -> IRI
+
+IRI %>%
+	filter(IRI < 600, date >= "2021-09-13", date < "2021-09-23") %>%
+	mutate(group = if_else(Mouse %in% c(1, 2, 3, 6, 0), "Uncertainty", "Certainty")) -> retrieval
+
+retrieval %>%
+	ggplot(aes(IRI_corr, color = group)) +
+	geom_density() +
+	theme_pubr() +
+	xlab("Retrieval time") +
+	ylab("Density") +
+	labs(color = "Condition")
+ggsave("IRI.png", width = 14)
+
+retrieval %>%
+	filter(group == "Uncertainty") %>%
+	group_by(Delay) %>%
+	summarise(mean_iri = mean(IRI_corr), sem = sd(IRI_corr) / sqrt(5)) %>%
+	ggplot(aes(Delay, mean_iri, group = 1)) +
+	geom_point() +
+	geom_errorbar(aes(ymin = mean_iri - sem, ymax = mean_iri + sem), width = 30) +
+	geom_line()
+
+retrieval %>%
+	filter(group == "Uncertainty") %>%
+	group_by(Mouse, Delay) %>%
+	summarise(mean_iri = mean(IRI_corr)) %>%
+	ggplot(aes(Delay, mean_iri, color = Mouse)) +
+	geom_point() +
+	geom_line()
+ggsave("ex.png", width = 14)
+
+retrieval %>%
+	filter(group == "Uncertainty") %>%
+	group_by(Mouse, Delay) %>%
+	summarise(mean_iri = (mean(IRI_corr))) %>%
+	ungroup() %>%
+	group_by(Mouse) %>%
+	mutate(scaled_iri = scale(mean_iri)) -> per_mice
+
+per_mice %>%
+	group_by(Delay) %>%
+	summarise(iri_group = mean(scaled_iri), sem = sd(scaled_iri) / sqrt(n())) -> group
+
+per_mice %>%
+	mutate(
+	       Mouse = as.factor(recode(Mouse,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       ))) %>%
+	ggplot(aes(Delay, scaled_iri, color = Mouse)) +
+	geom_point() +
+	geom_line() +
+	geom_point(data = group, inherit.aes = FALSE, aes(Delay, iri_group)) +
+	geom_line(data = group, inherit.aes = FALSE, aes(Delay, iri_group), size = 1.5) +
+	geom_errorbar(data = group, inherit.aes = FALSE, aes(x = Delay,
+							     ymin = iri_group - sem,
+							     ymax = iri_group + sem),
+		      width = 30, size = 1.5) +
+	theme_pubr() +
+	ylab("Time from delivery to retrieval") +
+	xlab("FED programmed delay")
+ggsave("delay.png", width = 14)
+
+
+
+
+
+
+
+
  
 
 
