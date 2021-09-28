@@ -1,7 +1,7 @@
 
 module wall_side (x,y,z, tol) {
 // variables
-ancho_placa = 44.2;  
+ancho_placa = 43.2;  // this controls how tight is the fit
 grosor_placa = 3;   
 grosor_soporte = 3;
 grosor_extra = 4;  
