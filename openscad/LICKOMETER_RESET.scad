@@ -1,7 +1,11 @@
 
 module sensor_slot (x,y,z, tol) {
 // variables
+<<<<<<< HEAD
 ancho_placa = 43.1;  
+=======
+ancho_placa = 43.2;  // this controls how tight is the fit
+>>>>>>> 6038d3d166c52dbd35ba64724e83e222b6e75e6d
 grosor_placa = 3;   
 grosor_soporte = 3;
 grosor_extra = 4;  
