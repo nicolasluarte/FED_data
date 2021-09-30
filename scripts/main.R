@@ -7,7 +7,9 @@ pacman::p_load(
 	       ggpubr,
 	       lubridate,
 	       ggforce,
-	       hms
+	       hms,
+	       imputeTS,
+	       chron
 	       )
 
 # load data -------------------------------------------------------------------
@@ -125,6 +127,11 @@ data %>%
 	ungroup() -> intake
 
 intake %>%
+	filter(day > "2021-09-06") %>%
+	group_by(group) %>%
+	summarise(m = mean(pellets))
+
+intake %>%
 	filter(day >= "2021-08-30", day < "2021-09-06") %>%
 	group_by(Mouse, group) %>%
 	summarise(baseline_pellets = mean(pellets)) %>%
@@ -137,7 +144,7 @@ intake %>%
 	ungroup() -> delta_intake
 
 delta_intake %>%
-	filter(day < "2021-09-23", delta_pellets > -50) %>%
+	filter(day < "2021-09-30", delta_pellets > -50) %>%
 	group_by(day, group) %>%
 	summarise(
 		  mean_pellet = mean(delta_pellets),
@@ -150,10 +157,10 @@ delta_weight %>%
 	summarise(weight = mean(weight)) %>%
 	mutate(Mouse = mice) -> mice_w
 
-write_csv(delta_intake, "delta_intake.csv")
+#write_csv(delta_intake, "delta_intake.csv")
 
 delta_intake %>%
-	filter(day != "2021-09-23", delta_pellets > -50) %>%
+	filter(day != "2021-09-30", delta_pellets > -50) %>%
 	mutate(
 	       Mouse = as.factor(recode(Mouse,
 		`0` = 265,
@@ -213,12 +220,12 @@ IRI %>%
 	filter(IRI_corr > 0) -> IRI
 
 IRI %>%
-	filter(IRI < 600, date >= "2021-09-13", date < "2021-09-23") %>%
+	filter(IRI < 600, date >= "2021-09-13", date <= "2021-09-24") %>%
 	mutate(group = if_else(Mouse %in% c(1, 2, 3, 6, 0), "Uncertainty", "Certainty")) -> retrieval
 
 retrieval %>%
 	ggplot(aes(IRI_corr, color = group)) +
-	geom_density() +
+	geom_histogram() +
 	theme_pubr() +
 	xlab("Retrieval time") +
 	ylab("Density") +
@@ -270,18 +277,111 @@ per_mice %>%
 		`9` = 264
 	       ))) %>%
 	ggplot(aes(Delay, scaled_iri, color = Mouse)) +
-	geom_point() +
-	geom_line() +
 	geom_point(data = group, inherit.aes = FALSE, aes(Delay, iri_group)) +
-	geom_line(data = group, inherit.aes = FALSE, aes(Delay, iri_group), size = 1.5) +
+	geom_col(data = group, inherit.aes = FALSE, aes(Delay, iri_group), size = 1.5) +
 	geom_errorbar(data = group, inherit.aes = FALSE, aes(x = Delay,
 							     ymin = iri_group - sem,
 							     ymax = iri_group + sem),
-		      width = 30, size = 1.5) +
+		      width = 10, size = 0.5) +
+	geom_point(alpha = 0.5) +
+	geom_line(alpha = 0.5) +
+	geom_hline(yintercept = 0) +
 	theme_pubr() +
 	ylab("Time from delivery to retrieval") +
 	xlab("FED programmed delay")
 ggsave("delay.png", width = 14)
+
+# delta bodyweight barplot
+
+delta_weight %>%
+	filter(date >= "2021-09-20") %>%
+	group_by(group) %>%
+	summarise(mean_delta_weight = mean(delta_weight),
+	sem = sd(delta_weight) / sqrt(5)) -> mean_weight_group
+
+delta_weight %>%
+	filter(date >= "2021-09-20") %>%
+	group_by(mice, group) %>%
+	summarise(mean_delta_weight = mean(delta_weight)) -> mean_weight_mice
+
+mean_weight_group %>%
+	ggplot(aes(group, mean_delta_weight, ymin = mean_delta_weight - sem, ymax = mean_delta_weight + sem)) +
+	geom_col() +
+	geom_errorbar(width = 0.3) +
+	geom_point(data = mean_weight_mice, inherit.aes = FALSE, aes(group, mean_delta_weight, color = mice)) +
+	theme_pubr()
+ggsave("plot_a.png", width = 14)
+
+# delta pellets barplot
+
+delta_intake %>%
+	filter(day >= "2021-09-06", pellets > 20) %>%
+	group_by(group) %>%
+	summarise(mean_delta_intake = mean(delta_pellets), sem = sd(delta_pellets) / sqrt(5)) -> mean_pellet_group
+
+delta_intake %>%
+	filter(day >= "2021-09-06", pellets > 20) %>%
+	mutate(
+	       Mouse = as.factor(recode(Mouse,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       ))) %>%
+	group_by(Mouse, group) %>%
+	summarise(mean_delta_pellet = mean(delta_pellets)) -> mean_pellet_mice
+
+mean_pellet_group %>%
+	ggplot(aes(group, mean_delta_intake, ymin = mean_delta_intake - sem, ymax = mean_delta_intake + sem)) +
+	geom_col() +
+	geom_errorbar(width = 0.3) +
+	geom_point(data = mean_pellet_mice, inherit.aes = FALSE, aes(group, mean_delta_pellet, color = Mouse)) +
+	theme_pubr()
+ggsave("plot_b.png", width = 14)
+
+# delta pellets barplot last week
+
+delta_intake %>%
+	filter(day >= "2021-09-27", pellets > 20) %>%
+	group_by(group) %>%
+	summarise(mean_delta_intake = mean(delta_pellets), sem = sd(delta_pellets) / sqrt(5)) -> mean_pellet_group
+
+delta_intake %>%
+	filter(day >= "2021-09-27", pellets > 20) %>%
+	mutate(
+	       Mouse = as.factor(recode(Mouse,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       ))) %>%
+	group_by(Mouse, group) %>%
+	summarise(mean_delta_pellet = mean(delta_pellets)) -> mean_pellet_mice
+
+mean_pellet_group %>%
+	ggplot(aes(group, mean_delta_intake, ymin = mean_delta_intake - sem, ymax = mean_delta_intake + sem)) +
+	geom_col() +
+	geom_errorbar(width = 0.3) +
+	geom_point(data = mean_pellet_mice, inherit.aes = FALSE, aes(group, mean_delta_pellet, color = Mouse)) +
+	theme_pubr()
+ggsave("plot_b_last.png", width = 14)
+
+# delta bw vs delta intake weekly FAIL
+
+
+
 
 
 
@@ -448,12 +548,45 @@ ggsave("baseline_weight.png", width = 14)
 # intake raster ---------------------------------------------------------------
 
 data %>%
-	mutate(
-	       day = day(date),
-	       hh = format(as.POSIXct(strptime(date, "%Y-%m-%d %H:%M:%S", tz = "")), format = "%H:%M:%S"),
-	       hh = hms(hh),
-	       intake = "1"
-	       ) -> tt
+	mutate(h = lubridate::hour(date)) %>% 
+	filter(date > "2021-09-06") %>%
+	mutate(group = if_else(Mouse %in% c(1, 2, 3, 6, 0), "Uncertainty", "Certainty")) %>%
+	group_by(group, h) %>%
+	summarise(mean_intake = sum(PelletCount)) %>%
+	ungroup() %>%
+	group_by(group) %>%
+	mutate(scaled_intake = scale(mean_intake)) -> tt_summ
+
+tt_summ %>%
+	ggplot(aes(h, scaled_intake, color = group)) +
+	geom_rect(aes(xmin = 12,
+		      xmax = 23,
+		      ymin = -Inf,
+		      ymax = Inf
+		      ), color = "grey20") +
+	geom_line() +
+	theme_pubr() +
+ggsave("intake_hour.png", width = 14)
+
+tt %>%
+	filter(date > "2021-09-06") %>%
+	ggplot(aes(hh, as.factor(intake))) +
+	geom_rect(aes(xmin = lubridate::hms("12:00:00"),
+		      xmax = lubridate::hms("23:59:59"),
+		      ymin = -Inf,
+		      ymax = Inf
+		      ), color = "grey20") +
+	geom_point(pch = "|") +
+	scale_x_time() +
+	theme_pubr() +
+	xlab("Hour") +
+	ylab("Pellet removal") +
+	theme(axis.text.y = element_blank(),
+	      axis.text.x = element_text(color = "grey20", size = 5, hjust = .5, vjust = .5, face = "plain"),
+	      strip.background = element_rect(fill = 'white'),
+	       strip.text.x = element_text(size = 12, color = "black", face = "bold"))
+	
+
 
 tt %>%
 	filter(day >= 23, day != 30) %>%
