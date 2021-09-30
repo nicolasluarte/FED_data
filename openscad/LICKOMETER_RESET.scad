@@ -2,7 +2,7 @@
 module sensor_slot (x,y,z, tol) {
 // variables
 
-ancho_placa = 43.31;  // this controls how tight is the fit
+ancho_placa = 43.9;  // this controls how tight is the fit
 grosor_placa = 3;   
 grosor_soporte = 3;
 grosor_extra = 4;  
@@ -49,7 +49,7 @@ module cable_hole(length, width){
 
 module cut(){
 translate([-10,-10,0])
-cube([60,40,40]);
+cube([80,55,40]);
 }
 
     
