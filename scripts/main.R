@@ -51,7 +51,71 @@ lights_labels <- function(light_init){
 data %>%
 	mutate(lights = add_lights(date, 12, 23)) -> data
 
-# mice weights ----------------------------------------------------------------
+# mice weights delta ----------------------------------------------------------------
+
+read_csv("../data/mice_weight.csv") %>%
+	mutate(
+	       date = dmy(date),
+	       mice = as.factor(mice)
+	       ) %>% filter(mice != 246) -> weights
+
+weights %>%
+	filter(date == "2021-09-06") %>%
+	right_join(weights, by = c("mice"), suffix = c("_init", "")) %>%
+	select(-date_init) %>%
+	mutate(
+	       delta_weight = ((weight - weight_init) / ((weight + weight_init) / 2)) * 100) -> delta_weight
+
+delta_weight %>%
+	mutate(group = if_else(mice %in% c(234, 235, 236, 245, 265), "Uncertainty", "Certainty")) -> delta_weight
+
+delta_weight %>%
+	group_by(group, date) %>%
+	summarise(
+		  group_delta_weight = mean(delta_weight),
+		  sem = sd(delta_weight) / sqrt(n())
+		  ) %>%
+	ungroup() -> group_delta_weight
+
+delta_weight %>%
+	filter(date >= "2021-09-06") -> delta_weight
+group_delta_weight %>%
+	filter(date >= "2021-09-06") -> group_delta_weight
+
+delta_weight %>%
+	ggplot(aes(date, delta_weight, group = mice, color = mice)) +
+	geom_point() +
+	geom_line() +
+	geom_point(
+		   data = group_delta_weight,
+		   aes(date, group_delta_weight),
+		   inherit.aes = FALSE
+		   ) +
+	geom_line(
+		   data = group_delta_weight,
+		   aes(date, group_delta_weight),
+		   inherit.aes = FALSE,
+		   size = 1.5
+		   ) +
+	geom_errorbar(
+		   data = group_delta_weight,
+		   aes(
+		       date,
+		       ymin = group_delta_weight - sem,
+		       ymax = group_delta_weight + sem
+		       ),
+		      width = 0.3,
+		   inherit.aes = FALSE
+		   ) +
+	facet_wrap(~group) +
+	theme_pubr() +
+	ylab("% weight delta") +
+	xlab("Date")
+ggsave("weight.png", width = 14)
+
+
+
+# mice weight -----------------------------------------------------------------
 
 read_csv("../data/mice_weight.csv") %>%
 	mutate(
@@ -156,6 +220,84 @@ delta_weight %>%
 	group_by(mice) %>%
 	summarise(weight = mean(weight)) %>%
 	mutate(Mouse = mice) -> mice_w
+
+# cumulative mice intake ------------------------------------------------------
+
+data %>%
+	mutate(group = if_else(Mouse %in% c(1, 2, 3, 6, 0), "Uncertainty", "Certainty")) %>%
+	mutate(day = as.Date(date)) %>%
+	filter(day != "2021-09-10") %>%
+	group_by(Mouse, day, group) %>%
+	summarise(pellets = n()) %>%
+	ungroup() %>%
+	filter(day >= "2021-09-06") -> intake
+
+intake %>%
+	filter(day == "2021-09-06") %>%
+	right_join(intake, by = c("Mouse"), suffix = c("_init", "")) %>%
+	select(-day_init, -group_init) %>%
+	mutate(delta_pellets = ((pellets - pellets_init) / (pellets + pellets_init / 2)) * 100) %>%
+	group_by(Mouse) %>%
+	mutate(cum_delta = cumsum(delta_pellets), cum_pellets = cumsum(pellets)) %>%
+	ungroup() %>%
+	mutate(
+	       Mouse = as.factor(recode(Mouse,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       ))) -> cum_delta_intake
+
+cum_delta_intake %>%
+	filter(day == "2021-09-06") %>%
+	right_join(intake, by = c("Mouse"), suffix = c("_init", "")) %>%
+	select(-day_init, -group_init) %>%
+	mutate(delta_pellets = ((pellets - pellets_init) / (pellets + pellets_init / 2)) * 100) %>%
+	group_by(Mouse) %>%
+	mutate(cum_delta = cumsum(delta_pellets), cum_pellets = cumsum(pellets)) %>%
+	ungroup() %>%
+	mutate(
+	       Mouse = as.factor(recode(Mouse,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       ))) %>%
+	group_by(group, day) %>%
+	summarise(mean_intake = mean(cum_pellets), sem = sd(cum_pellets) / sqrt(5)) -> group_delta_intake 
+
+
+cum_delta_intake %>%
+	filter(Mouse != 246) %>%
+	ggplot(aes(day, cum_pellets, color = Mouse)) +
+	geom_line() +
+	geom_point() +
+	geom_line(data = group_delta_intake, inherit.aes = FALSE, aes(day, mean_intake)) +
+	geom_errorbar(data = group_delta_intake, inherit.aes = FALSE, aes(day, ymin = mean_intake - sem, ymax = mean_intake + sem)) +
+	facet_wrap(~group) +
+	ylab("Pellets consumed") +
+	xlab("Date") +
+	theme_pubr()
+ggsave("intake_cum.png", width = 14)
+
+cum_delta_intake %>%
+	ggplot(aes(day, cum_delta, color = Mouse)) +
+	geom_line() +
+	facet_wrap(~group)
+
+
 
 #write_csv(delta_intake, "delta_intake.csv")
 
@@ -637,5 +779,50 @@ data_hourly_intake %>%
 	ylab("Mean pellet intake per hour") +
 	scale_color_manual(labels = c("Dark", "Light"), values = c("gray", "gray90"))
 
-# test area -------------------------------------------------------------------
+# lickometer ------------------------------------------------------------------
+
+read_csv("hoja_resumen.csv") %>%
+	mutate(
+	       animal = as.factor(recode(animal,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       ))) %>%
+	mutate(animal = as.factor(animal), sesion = as.factor(sesion)) %>%
+	mutate(group = if_else(animal %in% c(234, 235, 236, 245, 265), "Uncertainty", "Certainty")) -> lickometer
+
+lickometer %>%
+	group_by(group, sesion) %>%
+	summarise(mean_licks = mean(l_sac))
+
+lickometer %>%
+	ggplot(aes(sesion, l_sac, color = animal, group = animal)) +
+	geom_point() +
+	geom_line() +
+	facet_grid(~group) +
+	theme_pubr() +
+	ylab("Licks sacarosa") +
+	xlab("Sesiones")
+ggsave("licks.png", width = 14)
+
+lickometer %>%
+	gather(spout, licks, c("l_sac", "l_agua")) %>%
+	group_by(animal, spout, group) %>%
+	summarise(mean_licks = mean(licks)) %>%	
+	ggplot(aes(spout, mean_licks, color = animal, group = animal)) +
+	geom_point() +
+	geom_line() +
+	facet_wrap(~group) +
+	theme_pubr()
+ggsave("lickometer.png", width = 14)
+
+
+
 
