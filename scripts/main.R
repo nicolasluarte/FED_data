@@ -9,7 +9,9 @@ pacman::p_load(
 	       ggforce,
 	       hms,
 	       imputeTS,
-	       chron
+	       chron,
+	       lme4,
+	       lmerTest
 	       )
 
 # load data -------------------------------------------------------------------
@@ -68,6 +70,80 @@ weights %>%
 
 delta_weight %>%
 	mutate(group = if_else(mice %in% c(234, 235, 236, 245, 265), "Uncertainty", "Certainty")) -> delta_weight
+
+# ANOVA -----------------------------------------------------------------------
+
+delta_weight %>%
+	filter(date >= "2021-09-06") %>%
+	mutate(session = lubridate::yday(date) - min(lubridate::yday(date))) -> delta_weight
+
+mdl_weight <- lmer(delta_weight ~ session * group + (1 | mice), data = delta_weight)
+anova(mdl_weight)
+summary(mdl_weight)
+
+delta_weight %>%
+	group_by(date, group) %>%
+	summarise(weight_m = mean(delta_weight), sem = sd(delta_weight) / sqrt(n())) %>%
+	ggplot(aes(date, weight_m, ymin = weight_m - sem, ymax = weight_m + sem, color = group)) +
+	       geom_line() +
+	       geom_point() +
+	       geom_errorbar() +
+	       theme_pubr()
+ggsave("weight_time.png", width = 14)
+
+
+
+# last day weight delta -------------------------------------------------------
+
+delta_weight %>%
+	filter(date == "2021-10-15") %>%
+	ungroup() -> last_delta
+
+unc <- subset(last_delta, group == "Uncertainty")
+cer <- subset(last_delta, group == "Certainty")
+t.test(unc$delta_weight, cer$delta_weight)
+
+ggbarplot(
+	  last_delta,
+	  x = "group",
+	  y = "delta_weight",
+	  color = "group",
+	  palette = "jco",
+	  add = c("mean_se", "jitter")
+	  ) + 
+stat_compare_means(method = "t.test")
+ggsave("last_day_delta.png", width = 14)
+
+# normalized fat --------------------------------------------------------------
+
+read_csv("../data/wat.csv") %>%
+	mutate(
+	       animal = as.factor(animal)
+	       ) -> wat
+wat %>%
+	bind_cols(weight = last_delta$weight) %>%
+	mutate(norm_fat = (fat_weight / weight) * 100,
+	       	group = if_else(animal %in% c(234, 235, 236, 245, 265), "Uncertainty", "Certainty")) -> wat
+	
+unc_f <- subset(wat, group == "Uncertainty")
+cer_f <- subset(wat, group == "Certainty")
+t.test(unc_f$norm_fat, cer_f$norm_fat)
+
+ggbarplot(
+	  wat,
+	  x = "group",
+	  y = "norm_fat",
+	  color = "group",
+	  palette = "jco",
+	  add = c("mean_se", "jitter")
+	  ) + 
+stat_compare_means(method = "t.test")
+ggsave("fat.png", width = 14)
+
+
+
+
+
 
 delta_weight %>%
 	group_by(group, date) %>%
@@ -233,6 +309,46 @@ data %>%
 	filter(day >= "2021-09-06") -> intake
 
 intake %>%
+	mutate(
+	       Mouse = as.factor(recode(Mouse,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       ))) -> intake
+
+intake %>%
+	filter(day >= "2021-09-27", day < "2021-10-15") %>%
+	group_by(group, day) %>%
+	summarise(pellets_m = mean(pellets), sem = sd(pellets) / sqrt(n())) %>%
+	ungroup() %>%
+	ggplot(aes(day, pellets_m, color = group, ymin = pellets_m - sem , ymax = pellets_m + sem)) +
+	geom_line() +
+	geom_point() +
+	geom_errorbar() +
+	geom_vline(xintercept = as.Date("2021-10-04")) +
+	geom_vline(xintercept = as.Date("2021-10-11")) +
+	theme_pubr() +
+	annotate(
+		 "text",
+		 label = "Fixed Ratio",
+		 x = as.Date("2021-10-07"), y = 90, size = 5, colour = "red"
+		 ) +
+	annotate(
+		 "text",
+		 label = "Progressive Ratio",
+		 x = as.Date("2021-10-13"), y = 90, size = 5, colour = "red"
+		 ) 
+ggsave("intake_frpr.png", width = 14)
+
+
+intake %>%
 	filter(day == "2021-09-06") %>%
 	right_join(intake, by = c("Mouse"), suffix = c("_init", "")) %>%
 	select(-day_init, -group_init) %>%
@@ -278,6 +394,23 @@ cum_delta_intake %>%
 	group_by(group, day) %>%
 	summarise(mean_intake = mean(cum_pellets), sem = sd(cum_pellets) / sqrt(5)) -> group_delta_intake 
 
+# --
+
+cum_delta_intake %>%
+	filter(day == "2021-10-15") -> last_intake
+
+ggbarplot(
+	  last_intake,
+	  x = "group",
+	  y = "cum_pellets",
+	  color = "group",
+	  palette = "jco",
+	  add = c("mean_se", "jitter")
+	  ) + 
+stat_compare_means(method = "t.test") +
+ylab("Total pellet intake") +
+xlab("Days")
+ggsave("cum_pellets.png", width = 14)
 
 cum_delta_intake %>%
 	filter(Mouse != 246) %>%
@@ -291,6 +424,20 @@ cum_delta_intake %>%
 	xlab("Date") +
 	theme_pubr()
 ggsave("intake_cum.png", width = 14)
+
+group_delta_intake %>%
+	ggplot(aes(day, mean_intake, color = group)) +
+	geom_line()
+
+cum_delta_intake %>%
+	filter(Mouse != 246) %>%
+	ggplot(aes(day, pellets, color = Mouse)) +
+	geom_line() +
+	geom_point() +
+	facet_wrap(~group) +
+	ylab("Pellets consumed") +
+	xlab("Date") +
+	theme_pubr()
 
 cum_delta_intake %>%
 	ggplot(aes(day, cum_delta, color = Mouse)) +
