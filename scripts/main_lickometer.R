@@ -101,10 +101,9 @@ data %>%
 	) -> lickometer
 
 lickometer %>%
-	group_by(date) %>%
+	group_by(date, ID, sensor) %>%
 	mutate(
-	       init_ms = (tiempo %% 1000) + tiempo,
-	       init_ms = init_ms - init_ms[1],
+	       init_ms = tiempo - min(tiempo),
 	       block = as.factor(if_else(init_ms >= 30 * 60000, "2", "1"))
 	       ) -> lickometer
 
@@ -183,4 +182,64 @@ dat_summ %>%
 	theme_pubr()
 ggsave("events.png", width = 14)
 
+# licks in and out of time ----------------------------------------------------
+
+
+# calculate time from last event
+data %>%
+	mutate(time = gsub("(.{2})", "\\1 ", hour) %>%
+	gsub(" ", ":", .) %>%
+	gsub('.{1}$', '', .),
+	time = lubridate::hms(time)
+	) -> lickometer
+lickometer %>%
+	group_by(date, ID) %>%
+	mutate(
+	       init_ms = tiempo - tiempo[1],
+	       block = as.factor(if_else(init_ms >= 30 * 60000, "2", "1"))
+	       ) -> lickometer
+
+lickometer %>%
+	filter(spout == "sucrose") %>%
+	group_by(date, ID, sensor, evento) %>%
+	mutate(
+	       time_from_event = tiempo - min(tiempo),
+	       check = min(init_ms),
+	       time_out = time_from_event <= 20000 & time_from_event >= 1000
+		       ) -> lickometer_post
+
+lickometer_post %>%
+	group_by(ID, type, group) %>%
+	summarise(
+		  ratio_time_out = sum(time_out) / sum(!time_out)
+		  ) %>%
+	ungroup() %>%
+	group_by(type, group) %>%
+	summarise(
+		  ratio_time_out_m = mean(ratio_time_out),
+		  sem = sd(ratio_time_out) / sqrt(n())
+		  ) %>%
+	ungroup() -> time_out
+
+lickometer_post %>%
+	group_by(ID, type, group) %>%
+	summarise(
+		  ratio_time_out = sum(time_out) / sum(!time_out)
+		  ) %>%
+	ungroup() %>%
+	ungroup() -> time_out_p
+
+time_out %>%
+	ggplot(aes(group, ratio_time_out_m,
+		   ymin = ratio_time_out_m - sem,
+		   ymax = ratio_time_out_m + sem,
+		   fill = group
+		   )) +
+	geom_col() +
+	geom_errorbar(width = 0.3) +
+	geom_point(data = time_out_p, inherit.aes = FALSE, aes(group, ratio_time_out)) +
+	geom_label(data = time_out_p, inherit.aes = FALSE, aes(group, ratio_time_out, label = ID)) +
+	facet_wrap(~type, scales = "free") +
+	theme_pubr() +
+	ggsci::scale_fill_npg()
 
