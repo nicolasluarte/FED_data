@@ -11,7 +11,8 @@ pacman::p_load(
 	       imputeTS,
 	       chron,
 	       lme4,
-	       lmerTest
+	       lmerTest,
+	       ggrepel
 	       )
 
 # load data -------------------------------------------------------------------
@@ -187,6 +188,7 @@ ggsave("events.png", width = 14)
 
 # calculate time from last event
 data %>%
+	filter(ID != 246) %>%
 	mutate(time = gsub("(.{2})", "\\1 ", hour) %>%
 	gsub(" ", ":", .) %>%
 	gsub('.{1}$', '', .),
@@ -200,13 +202,91 @@ lickometer %>%
 	       ) -> lickometer
 
 lickometer %>%
-	filter(spout == "sucrose") %>%
 	group_by(date, ID, sensor, evento) %>%
 	mutate(
 	       time_from_event = tiempo - min(tiempo),
 	       check = min(init_ms),
-	       time_out = time_from_event <= 20000 & time_from_event >= 1000
+	       time_out = time_from_event <= 20000
 		       ) -> lickometer_post
+
+
+lickometer_post %>%
+	filter(type == "PR", spout == "sucrose", ID == 236) %>%
+	select(ID, actividad, evento, time_out, time_from_event) %>%
+	View
+
+
+lickometer_post %>% filter(type == "PR") %>%
+	group_by(date, ID, evento, spout) %>%
+	summarise(intime = sum(time_out), total = n()) %>%
+	ungroup() %>%
+	mutate(
+	       real_intime = case_when(
+				       evento == 0 ~ 5,
+				       evento == 1 ~ 7,
+				       evento == 2 ~ 11,
+				       evento == 3 ~ 17,
+				       evento == 4 ~ 25,
+				       evento == 5 ~ 35,
+				       evento == 6 ~ 47,
+				       evento == 7 ~ 61,
+				       evento == 8 ~ 77,
+				       evento == 9 ~ 95,
+				       evento == 10 ~ 115,
+				       evento == 11 ~ 137,
+				       evento == 12 ~ 161,
+				       evento == 13 ~ 187,
+				       evento == 14 ~ 215,
+				       evento == 15 ~ 245
+				       ),
+	       ff = total - real_intime,
+	       mark = if_else(ff < 0, "del", "keep")
+	       ) %>% 
+	select(date, ID, evento, spout, mark) -> test
+
+lickometer_post %>%
+	left_join(test, by = c("date", "ID", "evento", "spout")) %>%
+	filter(type == "PR") -> clean_data
+
+clean_data %>% dim()
+
+clean_data %>% 
+	filter(mark == "keep") -> valid
+
+valid %>%
+	group_by(date, ID, spout) %>%
+	mutate(actividad = 1:n()) -> licks_fix
+
+licks_fix %>%
+	group_by(date, ID, spout, evento) %>%
+	mutate(idx = factor(evento)) %>%
+	mutate(evento = (as.numeric(idx))) -> events_fix
+
+events_fix %>%
+	select(
+	       ID,
+	       sensor,
+	       tiempo,
+	       actividad,
+	       evento,
+	       exito,
+	       session
+	       ) %>%
+	write_csv(., "PR_SESSIONS.csv")
+
+
+
+
+
+
+events_fix %>%
+	group_by(date, ID, sensor, evento) %>%
+	mutate(
+	       time_from_event = tiempo - min(tiempo),
+	       check = min(init_ms),
+	       time_out = time_from_event <= 20000
+		       ) -> lickometer_post_2
+
 
 lickometer_post %>%
 	group_by(ID, type, group) %>%
@@ -219,7 +299,9 @@ lickometer_post %>%
 		  ratio_time_out_m = mean(ratio_time_out),
 		  sem = sd(ratio_time_out) / sqrt(n())
 		  ) %>%
-	ungroup() -> time_out
+	ungroup() 
+
+
 
 lickometer_post %>%
 	group_by(ID, type, group) %>%
@@ -238,8 +320,41 @@ time_out %>%
 	geom_col() +
 	geom_errorbar(width = 0.3) +
 	geom_point(data = time_out_p, inherit.aes = FALSE, aes(group, ratio_time_out)) +
-	geom_label(data = time_out_p, inherit.aes = FALSE, aes(group, ratio_time_out, label = ID)) +
+	geom_label_repel(data = time_out_p, inherit.aes = FALSE, aes(group, ratio_time_out, label = ID)) +
 	facet_wrap(~type, scales = "free") +
 	theme_pubr() +
 	ggsci::scale_fill_npg()
+ggsave("ratio.png", width = 14)
 
+lickometer_post %>%
+	group_by(date, ID, type, group) %>%
+	summarise(
+		  ratio_time_out = sum(time_out) / sum(!time_out)
+		  ) %>%
+	ungroup() %>%
+	group_by(date, type, group) %>%
+	summarise(
+		  ratio_time_out_m = mean(ratio_time_out),
+		  sem = sd(ratio_time_out) / sqrt(n())
+		  ) %>%
+	ungroup() -> time_out_date
+
+time_out_date %>%
+	filter(type == "PR") %>%
+	ggplot(aes(date, ratio_time_out_m,
+		   ymin = ratio_time_out_m - sem,
+		   ymax = ratio_time_out_m + sem,
+		   color = group
+		   )) +
+	geom_line() +
+	geom_point() +
+	geom_errorbar(width = 0.3) +
+	theme_pubr()
+ggsave("ratio_days.png", width = 14)
+
+
+lickometer_post %>%
+	group_by(date, ID, sensor, type) %>%
+	summarise(
+		  events = max(evento)
+	)

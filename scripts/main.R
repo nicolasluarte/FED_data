@@ -11,7 +11,11 @@ pacman::p_load(
 	       imputeTS,
 	       chron,
 	       lme4,
-	       lmerTest
+	       lmerTest,
+	       ggsci,
+	       viridis,
+	       sjPlot,
+	       sjmisc
 	       )
 
 # load data -------------------------------------------------------------------
@@ -52,6 +56,173 @@ lights_labels <- function(light_init){
 
 data %>%
 	mutate(lights = add_lights(date, 12, 23)) -> data
+
+# intake data -----------------------------------------------------------------
+
+data %>%
+	mutate(
+	       Mouse = as.factor(recode(Mouse,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       )),
+	       posix = as.numeric(as.POSIXct(date)),
+	       time = lubridate::hms(format(as.POSIXct(date), format = "%H:%M:%S")),
+	       date = as_date(date),
+	       group = as.factor(if_else(Mouse %in% c(234, 235, 236, 245, 265), "Uncertainty", "Certainty")),
+	) %>%
+	drop_na() %>%
+	rename(
+	       ID = Mouse,
+	       pellets = PelletCount,
+	       motor_turns = MotorTurns,
+	       delay = Delay) %>%
+	select(-BatteryVoltage) %>%
+	filter(ID != 246) -> intake_data
+
+# 24 hour intake
+
+intake_data %>%
+	filter(date >= "2021-09-06") %>%
+	group_by(ID, date, group) %>%
+	summarise(daily_intake = n()) -> daily_intake
+
+daily_intake %>%
+	group_by(ID, group) %>%
+	summarise(total_intake = sum(daily_intake)) -> intake.i
+
+intake.i %>%
+	group_by(group) %>%
+	summarise(
+		  sem = sd(total_intake) / sqrt(n()),
+		  total_intake = mean(total_intake)
+		  ) -> intake.g
+
+intake.i %>%
+	ggplot(aes(group, total_intake, fill = group)) +
+	geom_bar(data = intake.g, stat = "identity") +
+	geom_errorbar(
+		      data = intake.g,
+		      aes(
+			  ymin = total_intake - sem,
+			  ymax = total_intake + sem
+		      ),
+		      width = 0.3
+		      ) +
+	geom_point(size = 2) +
+	theme_pubr() +
+	xlab("Experimental group") +
+	ylab("Mean total intake") +
+	theme(text = element_text(size=20)) +
+	scale_fill_manual(values=c("#999999", "#044f02")) +
+	theme(legend.title = element_blank(), legend.position = "none") +
+	stat_compare_means(method = "t.test",
+			   size = 9,
+			   aes(label = ..p.signif..),
+			   comparisons = list(c("Certainty", "Uncertainty")))
+ggsave("total_intake.png", width = 14)
+
+# 24 hour light/dark intake
+
+intake_data %>%
+	filter(date >= "2021-09-06") %>%
+	group_by(ID, date, group, lights) %>%
+	summarise(daily_intake = n()) -> circadian_intake
+
+circadian_intake %>%
+	group_by(ID, group, lights) %>%
+	summarise(total_intake = sum(daily_intake)) -> circadian.i
+
+circadian.i %>%
+	group_by(group, lights) %>%
+	summarise(
+		  sem = sd(total_intake) / sqrt(n()),
+		  total_intake = mean(total_intake)
+		  ) -> circadian.g
+
+circadian.i %>%
+	ggplot(aes(group, total_intake, fill = group)) +
+	geom_bar(data = circadian.g, stat = "identity") +
+	geom_errorbar(
+		      data = circadian.g,
+		      aes(
+			  ymin = total_intake - sem,
+			  ymax = total_intake + sem
+		      ),
+		      width = 0.3
+		      ) +
+	geom_point(size = 2) +
+	theme_pubr() +
+	xlab("Experimental group") +
+	ylab("Mean total intake") +
+	theme(text = element_text(size=20)) +
+	scale_fill_manual(values=c("#999999", "#044f02")) +
+	theme(legend.title = element_blank(), legend.position = "none") +
+	stat_compare_means(method = "t.test",
+			   size = 9,
+			   aes(label = ..p.signif..),
+			   comparisons = list(c("Certainty", "Uncertainty"))) +
+	facet_grid(~lights)
+ggsave("circadian1.png", width = 14)
+
+# mean daily intake vs delta weight
+
+read_csv("../data/mice_weight.csv") %>%
+	mutate(
+	       date = dmy(date),
+	       ID = as.factor(mice)
+	       ) %>%
+	select(-mice) %>%
+	filter(ID != 246) -> weights
+
+weights %>%
+	filter(date == "2021-09-06") %>%
+	right_join(weights, by = c("ID"), suffix = c("_init", "")) %>%
+	select(-date_init) %>%
+	mutate(
+	       delta_weight = ((weight - weight_init) / ((weight + weight_init) / 2)) * 100) -> delta_weight
+
+
+intake_data %>%
+	mutate(session = lubridate::yday(date) - min(lubridate::yday(date))) %>%
+	filter(motor_turns < 10) %>%
+	group_by(ID, date) %>%
+	mutate(
+	       IRI = c(0, diff(posix)),
+	       IRI_corr = IRI - delay
+	) %>%
+	filter(IRI_corr > 0) -> IRI
+IRI %>%
+	filter(
+	       date >= "2021-09-06",
+	       date != "2021-10-15",
+	       IRI_corr <= 1000
+	       ) -> IRI
+mdl.iri <- lmer(IRI_corr ~ group * session + (1 | ID), data = IRI)
+summary(mdl.iri)
+
+IRI %>%
+	ggplot(aes(IRI_corr, color = group)) +
+	geom_density()
+
+IRI %>%
+	group_by(group) %>%
+	summarise(m = median(IRI_corr), s = sd(IRI_corr) / sqrt(n()))
+
+
+plot_model(mdl.iri, type = "pred", terms = c("group"))
+
+
+
+
+# light dark
 
 # mice weights delta ----------------------------------------------------------------
 
@@ -129,6 +300,11 @@ unc_f <- subset(wat, group == "Uncertainty")
 cer_f <- subset(wat, group == "Certainty")
 t.test(unc_f$norm_fat, cer_f$norm_fat)
 
+wat %>%
+	ggplot(aes(group, norm_fat)) +
+	geom_point() +
+	geom_label(aes(label = animal))
+
 ggbarplot(
 	  wat,
 	  x = "group",
@@ -137,7 +313,8 @@ ggbarplot(
 	  palette = "jco",
 	  add = c("mean_se", "jitter")
 	  ) + 
-stat_compare_means(method = "t.test")
+stat_compare_means(method = "t.test") +
+ggrepel::geom_text_repel(aes(label = animal))
 ggsave("fat.png", width = 14)
 
 
