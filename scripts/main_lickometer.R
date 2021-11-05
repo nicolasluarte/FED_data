@@ -15,6 +15,48 @@ pacman::p_load(
 	       ggrepel
 	       )
 
+# example
+
+list.files(path = "../data/lickometer_data",
+	   pattern = "*.csv",
+	   full.names = TRUE,
+	   recursive = TRUE) %>%
+	map_dfr(read_csv) %>%
+	write_csv("~/example.csv")
+
+c(
+  "ID,sensor,tiempo,actividad,evento,exito
+     234,0,784321,1,0,0,
+     234,0,784423,2,0,0,
+     234,0,784648,3,0,0,
+     234,0,785059,4,0,0,
+     234,0,785904,5,1,1,
+     235,0,793113,1,0,0,
+     234,1,818174,1,0,0,
+     234,1,818406,2,0,0,
+     234,1,818468,3,0,0"
+		  ) %>%
+	read_csv() -> df
+
+df %>%
+	group_by(ID, sensor) %>%
+	mutate(ILI = diff(c(tiempo[1], tiempo))) -> df
+
+threshold <- 220
+df %>%
+	group_by(ID, sensor) %>%
+	mutate(
+	       cluster = if_else(ILI <= threshold, "cluster", "pause"),
+	       cluster_index = as.numeric(as.factor(cluster)) %>%
+	       { if_else(. == 1, 1, 0) }
+       ) %>%
+	mutate(
+	       cluster_index = cumsum(cluster_index != lag(cluster_index, default = 0) %>%
+				      { if_else(cluster == "pause", 0, .)}) %>% as.factor()
+	       ) %>%
+	filter(cluster == "cluster")
+
+
 # load data -------------------------------------------------------------------
 
 list.files(path = "../data/lickometer_data",

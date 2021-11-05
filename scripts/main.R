@@ -28,14 +28,261 @@ list.files(path = "../data",
 
 # pre-proc --------------------------------------------------------------------
 
+	
 raw_data %>%
 	mutate(
-	       date = mdy_hms(`MM:DD:YYYY hh:mm:ss`),
-	       Mouse = as.factor(Mouse)
+	       date = as.Date(as.POSIXct(`MM:DD:YYYY hh:mm:ss`, format = "%m/%d/%Y %H:%M:%S"))
 	       ) %>%
+	filter(date >= "2021-10-04") %>%
+	mutate(
+	       epoch = as.numeric(as.POSIXct(`MM:DD:YYYY hh:mm:ss`, format = "%m/%d/%Y %H:%M:%S")),
+	       Mouse = as.factor(Mouse),
+	       session = as.numeric(as.factor(date))
+	) %>%
 	select(-`MM:DD:YYYY hh:mm:ss`) -> data
+
+# add groups, ID and intervals
+
 data %>%
-	drop_na(data) -> data
+	mutate(
+	       Mouse = as.factor(recode(Mouse,
+		`0` = 265,
+		`1` = 234,
+		`2` = 235,
+		`3` = 236,
+		`4` = 243,
+		`5` = 244,
+		`6` = 245,
+		`7` = 246,
+		`8` = 263,
+		`9` = 264
+	       )),
+	       group = as.factor(if_else(Mouse %in% c(234, 235, 236, 245, 265), "Uncertainty", "Certainty"))
+	       ) -> data
+
+# intervals
+
+data %>%
+	group_by(Mouse, date) %>%
+	mutate(interval = diff(c(epoch[1], epoch)) - Delay) -> data
+
+data %>%
+	filter(interval <= 1800 & interval > 0) %>%
+	ggplot(aes(interval, color = group)) +
+	geom_density() +
+	theme_pubr() +
+	xlab("Removal interval") +
+	ylab("Density") +
+	theme(text = element_text(size=20)) +
+	scale_fill_manual(values=c("#999999", "#044f02"))
+ggsave("removal.png", width = 14)
+
+# detect meals: intake within 5 minutes (300 seconds)
+
+data %>%
+	mutate(
+	       meal = if_else(interval <= 300 & interval > 0, "meal", "pause")
+	       ) -> data
+
+# size of meals
+
+data %>%
+	mutate(meal_idx = as.numeric(as.factor(meal)) %>%
+	       { if_else(. == 1, 1, 0) }
+	) %>%
+	mutate(meal_idx = cumsum(meal_idx != lag(meal_idx, default = 0))) %>%
+	filter(meal == "meal") %>%
+	mutate(meal_idx = as.numeric(as.factor(meal_idx))) -> meal_idx
+
+meal_idx %>%
+	group_by(Mouse, session, group, meal_idx) %>%
+	summarise(
+		  meal_size = n()
+		  ) %>%
+	ungroup() -> meal_size
+
+meal_size %>%
+	group_by(group) %>%
+	summarise(
+		  mean_meal_size = mean(meal_size),
+		  sem = sd(meal_size) / sqrt(n())
+		  ) -> meal_size_group
+
+meal_size %>%
+	group_by(Mouse, group) %>%
+	summarise(
+		  mean_meal_size = mean(meal_size),
+		  sem = sd(meal_size) / sqrt(n())
+		  ) -> meal_size_ind
+
+meal_size_group %>%
+	ggplot(aes(group, mean_meal_size,
+		   fill = group,
+		   ymin = mean_meal_size - sem,
+		   ymax = mean_meal_size + sem)) +
+	geom_bar(stat = "identity") +
+	geom_point(data = meal_size_ind) +
+	geom_errorbar(width = 0.3) +
+	theme_pubr() +
+	xlab("Experimental group") +
+	ylab("Mean meal size") +
+	theme(text = element_text(size=20)) +
+	scale_fill_manual(values=c("#999999", "#044f02")) +
+	theme(legend.title = element_blank(), legend.position = "none")
+ggsave("meal_size.png", width = 14)
+
+# number of meals
+meal_idx %>%
+	group_by(Mouse, session, group) %>%
+	summarise(
+		  meal_number = max(meal_idx)
+		  ) %>%
+	ungroup() -> meal_number
+
+meal_idx %>%
+	group_by(Mouse, session, group) %>%
+	summarise(
+		  meal_number = max(meal_idx)
+		  ) %>%
+	ungroup() %>%
+	group_by(Mouse, group) %>%
+	summarise(
+		  meal_number = mean(meal_number)
+		  ) -> meal_number_ind
+
+
+meal_number_ind %>%
+	group_by(group) %>%
+	summarise(sem = sd(meal_number) / sqrt(n()),
+		  meal_number = mean(meal_number)) -> meal_number_group
+
+meal_number_group %>%
+	ggplot(aes(group, meal_number,
+		   fill = group,
+		   ymin = meal_number - sem,
+		   ymax = meal_number + sem)) +
+	geom_bar(stat = "identity") +
+	geom_point(data = meal_number_ind, aes(group, meal_number), inherit.aes = FALSE) +
+	geom_errorbar(width = 0.3) +
+	theme_pubr() +
+	xlab("Experimental group") +
+	ylab("Mean meal number") +
+	theme(text = element_text(size=20)) +
+	scale_fill_manual(values=c("#999999", "#044f02")) +
+	theme(legend.title = element_blank(), legend.position = "none")
+ggsave("meal_number.png", width = 14)
+
+# meal duration
+
+meal_idx %>%
+	group_by(Mouse, session, group, meal_idx) %>%
+	summarise(
+		  meal_duration = sum(interval)
+		  ) %>%
+	ungroup() -> meal_duration
+
+meal_duration %>%
+	group_by(Mouse, group) %>%
+	summarise(
+		  mean_meal_duration = mean(meal_duration)
+		  ) -> meal_duration_ind
+
+meal_duration %>%
+	group_by(group) %>%
+	summarise(
+		  sem = sd(meal_duration) / sqrt(n()),
+		  mean_meal_duration = mean(meal_duration)
+		  ) -> meal_duration_group
+
+meal_duration_group %>%
+	ggplot(aes(group, mean_meal_duration, fill = group,
+		   ymin = mean_meal_duration - sem,
+		   ymax = mean_meal_duration + sem)) +
+	geom_bar(stat = "identity") +
+	geom_point(data = meal_duration_ind, aes(group, mean_meal_duration), inherit.aes = FALSE) +
+	geom_errorbar(width = 0.3) +
+	theme_pubr() +
+	xlab("Experimental group") +
+	ylab("Mean meal duration (s)") +
+	theme(text = element_text(size=20)) +
+	scale_fill_manual(values=c("#999999", "#044f02")) +
+	theme(legend.title = element_blank(), legend.position = "none") +
+ggsave("meal_duration.png", width = 14)
+
+# how much time to eat daily intake
+
+meal_number_ind %>%
+	left_join(meal_duration_ind %>% select(-group), by = "Mouse") %>%
+	mutate(
+	       intake_time = (meal_number * mean_meal_duration) / 60
+	       ) %>%
+	group_by(group) %>%
+	summarise(
+		  mean_intake_time = mean(intake_time),
+		  sem = sd(intake_time) / sqrt(n())
+		  ) %>%
+	ggplot(aes(group, mean_intake_time, fill = group,
+		   ymin = mean_intake_time - sem,
+		   ymax = mean_intake_time + sem)) +
+	geom_bar(stat = "identity") +
+	geom_errorbar(width = 0.3) +
+	theme_pubr() +
+	xlab("Experimental group") +
+	ylab("Mean time to consume daily intake") +
+	theme(text = element_text(size=20)) +
+	scale_fill_manual(values=c("#999999", "#044f02")) +
+	theme(legend.title = element_blank(), legend.position = "none")
+ggsave("daily_intake_time.png", width = 14)
+
+
+
+
+
+
+
+# add weight
+read_csv("../data/mice_weight.csv") %>%
+	mutate(
+	       date = dmy(date),
+	       Mouse = as.factor(mice)
+	       ) %>%
+	select(-mice) %>%
+	filter(Mouse != 246, date == "2021-10-15") -> weights
+
+meal_size %>%
+	left_join(weights, by = "Mouse") -> meal_size
+
+meal_number %>%
+	left_join(weights, by = "Mouse") -> meal_number
+
+meal_duration %>%
+	left_join(weights, by = "Mouse") -> meal_duration
+
+# add mean intake
+
+data %>%
+	group_by(Mouse, session, group) %>%
+	summarise(
+		  intake = n()
+		  ) %>%
+	ungroup() %>%
+	group_by(Mouse, session) %>%
+	summarise(mean_intake = mean(intake)) %>%
+	ungroup() -> mean_intake
+
+meal_size %>%
+	left_join(mean_intake, by = c("Mouse", "session")) -> meal_size
+
+
+
+meal_size_mdl <- lmer(data = meal_size, meal_size ~ group + weight + (1 | Mouse))
+summary(meal_size_mdl)
+
+meal_number_mdl <- lmer(data = meal_number, meal_number ~ group + weight + (1 | Mouse))
+summary(meal_number_mdl)
+
+meal_duration_mdl <- lmer(data = meal_duration, meal_duration ~ group + weight + (1 | Mouse))
+summary(meal_duration_mdl)
 
 # add lights off period -------------------------------------------------------
 
