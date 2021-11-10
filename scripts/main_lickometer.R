@@ -7,44 +7,68 @@ pacman::p_load(
 	       ggpubr,
 	       lubridate,
 	       ggforce,
-	       hms,
-	       imputeTS,
-	       chron,
 	       lme4,
 	       lmerTest,
-	       ggrepel
+	       ggrepel,
+	       sjPlot
 	       )
 
 # example
 
-list.files(path = "../data/lickometer_data",
-	   pattern = "*.csv",
-	   full.names = TRUE,
-	   recursive = TRUE) %>%
-	map_dfr(read_csv) %>%
-	write_csv("~/example.csv")
+read_csv("PR_SESSIONS.csv") -> df
 
-c(
-  "ID,sensor,tiempo,actividad,evento,exito
-     234,0,784321,1,0,0,
-     234,0,784423,2,0,0,
-     234,0,784648,3,0,0,
-     234,0,785059,4,0,0,
-     234,0,785904,5,1,1,
-     235,0,793113,1,0,0,
-     234,1,818174,1,0,0,
-     234,1,818406,2,0,0,
-     234,1,818468,3,0,0"
-		  ) %>%
-	read_csv() -> df
+# groups
 
 df %>%
-	group_by(ID, sensor) %>%
+	mutate(
+		group = if_else(ID %in% c(234, 235, 236, 245, 265), "Uncertainty", "Certainty")
+	       ) -> df
+
+# ILI
+
+df %>%
+	group_by(ID, sensor, group, date) %>%
 	mutate(ILI = diff(c(tiempo[1], tiempo))) -> df
 
-threshold <- 220
+# breakpoints
+
 df %>%
-	group_by(ID, sensor) %>%
+	group_by(date, ID, spout) %>%
+	mutate(
+	       tiempo = tiempo - tiempo[1],
+	       time_breaks = cut(tiempo, breaks = c(-Inf, 1800000, Inf), labels = c("First 30 minutes", "Last 30 minutes"))
+	) -> df
+
+# ILI histogram
+
+df %>%
+	filter(ILI < 250) %>%
+	ggplot(aes(ILI, color = group)) +
+	geom_density() +
+	theme_pubr() +
+	theme(text = element_text(size=20)) +
+	ylab("Density") +
+	xlab("Inter lick interval (ms)") +
+	labs(color = "Groups")
+ggsave("ILI_histogram.png", width = 14)
+
+df %>%
+	filter(ILI < 250) %>%
+	ggplot(aes(ILI, color = group)) +
+	geom_density() +
+	theme_pubr() +
+	theme(text = element_text(size=20)) +
+	ylab("Density") +
+	xlab("Inter lick interval (ms)") +
+	labs(color = "Groups") +
+	facet_wrap(~time_breaks)
+ggsave("ILI_histogram_breaks.png", width = 14)
+
+# meals check negative values
+
+threshold <- 500
+df %>%
+	group_by(ID, sensor, date, group) %>%
 	mutate(
 	       cluster = if_else(ILI <= threshold, "cluster", "pause"),
 	       cluster_index = as.numeric(as.factor(cluster)) %>%
@@ -54,35 +78,313 @@ df %>%
 	       cluster_index = cumsum(cluster_index != lag(cluster_index, default = 0) %>%
 				      { if_else(cluster == "pause", 0, .)}) %>% as.factor()
 	       ) %>%
-	filter(cluster == "cluster")
+	filter(cluster == "cluster", ILI > 0, spout == "sucrose") -> clusters
+
+# meal size
+
+clusters %>%
+	filter(spout == "sucrose") %>%
+	group_by(date, ID, cluster_index, group, time_breaks) %>%
+	summarise(
+		  cluster_size = n(),
+		  last_time = max(tiempo)
+		  ) %>%
+	ungroup() %>%
+	group_by(date, ID) %>%
+	mutate(last_time = scale(last_time)) %>%
+	ungroup() -> cluster_size
+
+# check licks within meal vs the rest
+
+df %>%
+	filter(spout == "sucrose") %>%
+	group_by(ID, session, group) %>%
+	summarise(
+		  total_licks = max(actividad),
+		  total_events = max(evento),
+		  ratio_le = total_licks / (total_events + 1)
+		  ) -> ratio
+
+ratio %>%
+	group_by(group, ID) %>%
+	summarise(
+		  ratio_le_mean = mean(ratio_le),
+		  ) -> ratio_m
+
+ratio %>%
+	group_by(group) %>%
+	summarise(
+		  sem = sd(ratio_le) / sqrt(n()),
+		  ratio_mean = mean(ratio_le)
+		  ) -> ratio_p
+
+ratio %>%
+	group_by(group, ID) %>%
+	summarise(
+		  sem = sd(ratio_le) / sqrt(n()),
+		  ratio_mean = mean(ratio_le)
+		  ) -> ratio_i
+
+ratio_p %>%
+	ggplot(aes(group, ratio_mean)) +
+	geom_col(stat = "identity") +
+	geom_errorbar(
+		      aes(
+			  ymin = ratio_mean - sem,
+			  ymax = ratio_mean + sem
+			  ),
+		      width = 0.3
+		      ) +
+	geom_point(data = ratio_i) +
+	theme_pubr() +
+	xlab("Group") +
+	ylab("Licks / Events") +
+	theme(text = element_text(size=20))
+ggsave("ratio_plot.png", width = 14)
+
+
+tibble(e = e, l = cumsum(l)) %>%
+	rename(total_events = e) %>%
+	mutate(optimal = l / e) -> optimal
+
+ratio %>%
+	left_join(optimal, by = "total_events") %>%
+	mutate(opt_diff = (ratio_le - optimal)
+	       ) -> ratio2
+
+ratio_mdl <- lmer(opt_diff ~ group  + (1 | ID), data = ratio2) 
+summary(ratio_mdl)
+
+
+l <- c(5,7,11,17,25,35,47,61,77,95,115,137,161,187,215,245)
+e <- c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16) - 1
+tibble(e = e, l = cumsum(l)) %>%
+	mutate(ratio = l / e) %>%
+	ggplot(aes(e, ratio)) +
+	geom_line() +
+	geom_hline(yintercept = 85, color = "red") +
+	geom_hline(yintercept = 60.5, color = "green") +
+	geom_text(aes(x = 10, y = 65, label = "Uncertainty")) +
+	geom_text(aes(x = 10, y = 90, label = "Certainty")) +
+	theme_pubr() +
+	xlab("Events") +
+	ylab("Licks / Events") +
+	theme(text = element_text(size=20))
+ggsave("optimal_ratio.png", width = 14)
+
+
+# ====
+
+cluster_size %>%
+	group_by(ID, group, time_breaks, date) %>%
+	summarise(
+		  sem = sd(cluster_size) / sqrt(n()),
+		  cluster_size_mean = mean(cluster_size)
+		  ) %>%
+	ungroup() -> cluster_size_rm
+
+cluster_size %>%
+	group_by(ID, group, time_breaks) %>%
+	summarise(
+		  sem = sd(cluster_size) / sqrt(n()),
+		  cluster_size_mean = mean(cluster_size)
+		  ) %>%
+	ungroup() -> cluster_size_i
+
+cluster_size %>%
+	group_by(group, time_breaks) %>%
+	summarise(
+		  sem = sd(cluster_size) / sqrt(n()),
+		  cluster_size_mean = mean(cluster_size)
+		  ) %>%
+	ungroup() -> cluster_size_p
+
+cluster_size_p %>%
+	ggplot(aes(group, cluster_size_mean, group = time_breaks)) +
+	geom_bar(stat = "identity", position = position_dodge(width = 1)) +
+	geom_errorbar(aes(ymin = cluster_size_mean - sem,
+			  ymax = cluster_size_mean + sem),
+		      position = position_dodge(width = 1)) +
+	geom_point(data = cluster_size_i,
+		   aes(group, cluster_size_mean),
+		   position = position_dodge(width = 1)) +
+	theme_pubr() +
+	theme(text = element_text(size=20)) +
+	ylab("Mean meal size") +
+	xlab("") +
+	labs(color = "Groups") +
+	facet_wrap(~time_breaks)
+ggsave("meal_size_30min.png", width = 14)
+
+# mixed linear model
+
+null <- lmer(cluster_size ~ 1 + (1 | ID), data = cluster_size)
+meal_size_model <- lmer(cluster_size ~ group * last_time + (1 | ID), data = cluster_size)
+summary(meal_size_model)
+
+anova(null, meal_size_model)
+
+plot_model(meal_size_model,
+	axis.labels = c("Group:Time", "Time within session", "Group (uncertainty)"),
+	show.values = TRUE,
+	show.p = TRUE,
+	title = "",
+	vline.color = "blue",
+	width = 0.5
+	) +
+	theme_pubr() +
+	theme(text = element_text(size=20))
+ggsave("mdl_meal_size.png", width = 14)
+
+options(browser = "firefox")
+tab_model(meal_size_model)
+
+# cdf
+
+cluster_size %>%
+	ggplot(aes(cluster_size, color = group)) +
+	geom_density() +
+	theme_pubr() +
+	theme(text = element_text(size=20)) +
+	ylab("Density") +
+	xlab("Meal size n") +
+	labs(color = "Groups")
+ggsave("meal_size_density.png", width = 14)
+
+cluster_size %>%
+	ggplot(aes(cluster_size, color = group)) +
+	geom_density() +
+	theme_pubr() +
+	theme(text = element_text(size=20)) +
+	ylab("Density") +
+	xlab("Meal size n") +
+	labs(color = "Groups") +
+	facet_wrap(~time_breaks)
+ggsave("meal_size_density_30min.png", width = 14)
+
+# number of clusters
+
+clusters %>%
+	filter(spout == "sucrose") %>%
+	group_by(ID, group, date, time_breaks) %>%
+	summarise(
+		  cluster_number = max(as.numeric(cluster_index)),
+		  last_time = max(tiempo)
+		  ) %>%
+	ungroup() %>%
+	group_by(date, ID) %>%
+	mutate(last_time = scale(last_time)) %>%
+	ungroup() -> cluster_number
+
+cluster_number %>%
+	group_by(ID, group, time_breaks) %>%
+	summarise(
+		  sem = sd(cluster_number) / sqrt(n()),
+		  cluster_number_mean = mean(cluster_number)
+		  ) %>%
+	ungroup() -> cluster_number_i
+
+cluster_number %>%
+	group_by(group, time_breaks) %>%
+	summarise(
+		  sem = sd(cluster_number) / sqrt(n()),
+		  cluster_number_mean = mean(cluster_number)
+		  ) %>%
+	ungroup() -> cluster_number_p
+
+cluster_number_p %>%
+	ggplot(aes(group, cluster_number_mean, group = time_breaks)) +
+	geom_bar(stat = "identity", position = position_dodge(width = 1)) +
+	geom_errorbar(aes(ymin = cluster_number_mean - sem,
+			  ymax = cluster_number_mean + sem),
+		      position = position_dodge(width = 1)) +
+	geom_point(data = cluster_number_i,
+		   aes(group, cluster_number_mean),
+		   position = position_dodge(width = 1)) +
+	theme_pubr() +
+	theme(text = element_text(size=20)) +
+	ylab("Mean meal number") +
+	xlab("") +
+	labs(color = "Groups") +
+	facet_wrap(~time_breaks)
+ggsave("meal_number_30min.png", width = 14)
+
+meal_number_model <- lmer(cluster_number ~ group * last_time + (1 | ID), data = cluster_number)
+summary(meal_number_model)
+
+plot_model(meal_number_model,
+	axis.labels = c("Group:Time", "Time within session", "Group (uncertainty)"),
+	show.values = TRUE,
+	show.p = TRUE,
+	title = "",
+	vline.color = "blue",
+	width = 0.5
+	) +
+	theme_pubr() +
+	theme(text = element_text(size=20))
+ggsave("mdl_meal_number.png", width = 14)
+
+# meal time
+
+clusters %>%
+	filter(spout == "sucrose") %>%
+	group_by(date, ID, cluster_index, group) %>%
+	summarise(
+		  cluster_time = sum(ILI),
+		  ) %>%
+	ungroup() -> cluster_time
+
+cluster_time %>%
+	group_by(ID, group) %>%
+	summarise(
+		  sem = sd(cluster_time) / sqrt(n()),
+		  cluster_time_mean = mean(cluster_time)
+		  ) %>%
+	ungroup() -> cluster_time_i
+
+cluster_time %>%
+	group_by(group) %>%
+	summarise(
+		  sem = sd(cluster_time) / sqrt(n()),
+		  cluster_time_mean = mean(cluster_time)
+		  ) %>%
+	ungroup()
+
+# lick frequency
+
+df %>%
+	mutate(interval = as.numeric(as.factor(tiempo %/% 1000))) %>%
+	group_by(ID, date, interval, group, time_breaks) %>%
+	summarise(
+		  hz = n()
+		  ) -> hz
+
+hz %>%
+	group_by(group, time_breaks) %>%
+	summarise(
+		  hz_mean = mean(hz)
+		  )
+
+
+
+# mean inter meal time
+
+# where are the meals?
+
+clusters %>%
+	group_by(date) %>%
+	mutate(tiempo = tiempo - tiempo[1], tick = as.factor(1)) %>%
+	ungroup() %>%
+	group_by(date, ID) %>%
+	mutate(scale_act = scale(actividad)) %>%
+	ggplot(aes(tiempo, scale_act, color = group, group = date)) +
+	geom_line() +
+	facet_wrap(~ID)
+
+
 
 
 # load data -------------------------------------------------------------------
-
-list.files(path = "../data/lickometer_data",
-	   pattern = "*.csv",
-	   full.names = TRUE,
-	   recursive = TRUE) %>%
-	set_names() %>%
-	map_dfr(read_csv, .id = "file_name")  %>%
-	mutate(date = str_extract(string = file_name, pattern = "2021[0-9]{4}"),
-	       hour = str_extract(string = file_name, pattern = "(?<=[0-9]_)(.*)(?=.csv)"),
-		date = ymd(date)) -> raw_data
-
-raw_data %>%
-	mutate(
-	       type = as.factor(if_else(date >= "2021-10-11", "PR", "FR")),
-	       ID = as.factor(ID),
-	       session = (day(date)),
-	       session = session - min(session),
-	       spout = case_when(
-				 session %% 2 == 0 & sensor == 0 ~ "water",
-				 session %% 2 == 0 & sensor == 1 ~ "sucrose",
-				 session %% 2 != 0 & sensor == 0 ~ "sucrose",
-				 session %% 2 != 0 & sensor == 1 ~ "water"
-				 ),
-	       group = if_else(ID %in% c(234, 235, 236, 245, 265), "Uncertainty", "Certainty")
-	       ) -> data
 
 data %>%
 	group_by(ID, session, spout, group, type) %>%
